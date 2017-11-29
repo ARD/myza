@@ -1,0 +1,143 @@
+#!/bin/bash
+
+#############################################################
+# Author: Andre Rainaud <contato@andrerainaud.com.br>       #
+# Simple dump MySQL databases with gzip compression         #
+#############################################################
+
+backupName=`date '+%d-%m-%Y_%H-%M-%S'`
+
+usage="
++---------------------------------------------------------+
+|   MYZA is simple script for dump MySQL database         |
+|   Author: Andre Rainaud <contato@andrerainaud.com.br>   |
++---------------------------------------------------------+
+
+Usage:
+myza -u username -p password -d [directory_path] [-l \"database1,database2...\"] [-a]
+
+where:
+	-h, --help  show this help text
+	-u  set database username
+	-p  set database password
+	-l  list of databases for dump
+	-a  dump all databases
+	-c  compress dump file with gzip
+	-t  dump tables in separate files
+	-d  define directory path for dump files
+	-v, --verbose  Print info about dump process"
+
+printMessage(){
+	if [[ "$verbose" == true ]]
+	then
+		printf "$1"
+	fi
+}
+
+i=1
+args="$@"
+for arg in $args
+do
+	pos=$((i+1))
+	case $arg in
+	-u)
+		myUser="${!pos}"		
+		;;
+	-p)
+		myPass="${!pos}"
+		;;
+	-a)
+		databases=`mysql --user=$myUser --password=$myPass -e "show databases;" --batch -L -N`
+		;;
+	-l)
+		databases=$(echo "${!pos}" | tr "," "\n")
+		;;
+	-c)
+		compressFile=true
+		;;
+	-t)
+		tablePerFile=true
+		;;
+	-v | --verbose)
+		verbose=true
+		;;
+	-d)
+		backupPath="${!pos}"
+		;;
+	-h | --help)
+		printf "$usage\n"
+		exit
+		;;
+	-*)
+		echo "$arg is not valid argument"
+		;;
+	esac
+	i=$((i + 1))
+done
+
+if [[ -z $myUser ]] 
+then
+	echo "Username not defined. Use -u parameter";
+	exit
+fi
+
+if [[ -z $myPass ]] 
+then
+	echo "Password not defined. Use -p parameter";
+	exit
+fi
+
+if [[ -z $databases ]] 
+then
+	echo "Set database name with -l \"database1,database2...\" or use -a parameter for dump all databases";
+	exit
+fi
+
+if [[ ! -d "$backupPath" ]]
+then
+	echo "Directory undefined or is not valid path. Use -d [directory_path] parameter"
+	exit
+fi
+
+mkdir $backupPath""$backupName
+cd $backupPath""$backupName
+
+for basename in $databases
+do	
+
+	if [[ "$tablePerFile" == true ]]
+	then
+		printMessage "\nDumping tables of '"$basename"' database...................................\n"
+		mkdir $basename
+		cd $basename
+
+		tables=`mysql --user=$myUser --password=$myPass -e "use $basename; show tables;" --batch -L -N`
+		for table in $tables
+		do
+			printMessage "Table: '"$table"'................................."
+			mysqldump --user=$myUser --password=$myPass $basename $table -c -R -f -E -K -q > $table.sql
+			printMessage "OK\n"
+		done
+
+
+		if [[ "$compressFile" == true ]]
+		then
+			cd $backupPath""$backupName
+
+			tar -zcf $basename.tar.gz $basename
+			rm -rf $basename
+		fi
+	fi
+
+	if [[ ! "$tablePerFile" == true ]]
+	then
+		printMessage "Dumping '"$basename"' database..................................."
+		mysqldump --user=$myUser --password=$myPass -B $basename -c -R -f -E -K -q > $basename.sql
+		if [[ "$compressFile" == true ]] 
+		then
+			tar -zcf $basename.tar.gz $basename.sql
+			rm $basename.sql
+		fi
+		printMessage "OK\n"
+	fi	
+done
